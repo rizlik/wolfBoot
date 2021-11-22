@@ -21,6 +21,7 @@ This README describes configuration of supported targets.
 * [STM32WB55](#stm32wb55)
 * [TI Hercules TMS570LC435](#ti-hercules-tms570lc435)
 * [Xilinx Zynq UltraScale](#xilinx-zynq-ultrascale)
+* [Qemu x86_64 UEFI](#qemu-x86_64-uefi)
 
 ## STM32F4
 
@@ -920,3 +921,43 @@ to compile.
 ## TI Hercules TMS570LC435
 
 See [/config/examples/ti-tms570lc435.config](/config/examples/ti-tms570lc435.config) for example configuration.
+
+
+## Qemu x86-64 UEFI
+
+x86-64bit machine with UEFI bios can run wolfBoot as EFI application.
+
+### Prerequisites:
+
+ * qemu-system-x86_64
+ * [GNU-EFI] (https://sourceforge.net/projects/gnu-efi/) 
+ * Open Virtual Machine firmware bios images (OVMF) by [Tianocore](https://tianocore.org)
+
+On a debian system it is sufficient to install the packages as follows:
+
+`apt install qemu ovmf gnu-efi`
+
+### Configuration
+
+An example configuration is provided in [config/examples/x86_64_efi.config](config/examples/x86_64_efi.config)
+
+### Building and running on qemu
+
+The bootloader and the initialization script `startup.nsh` for execution in the EFI environment are stored in a loopback FAT partition.
+
+The script [tools/script/prepare_uefi_partition.sh](tools/script/prepare_uefi_partition.sh) creates a new empty
+FAT loopback partitions and adds `startup.nsh`.
+
+Compiling with `make` will produce the bootloader image in `wolfboot.efi`.
+
+The script [tools/script/run_efi.sh](tools/script/run_efi.sh) will add `wolfboot.efi` to the bootloader loopback
+partition, and run the system on qemu. Ensure that the required file `OVMF.fd` is in the correct path, or launch the
+script with the `OVMF_PATH` option pointing to the directory for the bios. E.g. on debian systems, if OVMF.fd is in `/usr/share/qemu`,
+the scripts should be run as follows:
+
+```
+cp config/examples/x86_64_efi.config .config
+tools/scripts/prepare_uefi_partition.sh
+make
+OVMF_PATH=/usr/share/qemu tools/scripts/run_efi.sh
+```
