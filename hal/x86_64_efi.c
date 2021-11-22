@@ -39,6 +39,14 @@ void hal_prepare_boot(void)
 
 #endif
 
+#define PAGE_SIZE 0x1000
+#define EFI_DEVICE_PATH_PROTOCOL_HW_TYPE 0x01
+#define EFI_DEVICE_PATH_PROTOCOL_MEM_SUBTYPE 0x03
+
+static EFI_SYSTEM_TABLE *gSystemTable;
+static EFI_HANDLE *gImageHandle;
+static uint32_t gKernelSize;
+
 EFI_PHYSICAL_ADDRESS kernel_addr;
 
 int RAMFUNCTION hal_flash_write(uint32_t address, const uint8_t *data, int len)
@@ -62,6 +70,50 @@ int RAMFUNCTION hal_flash_erase(uint32_t address, int len)
 static void panic()
 {
     while(1) {}
+}
+
+void RAMFUNCTION x86_64_efi_do_boot(uint8_t *kernel)
+{
+    MEMMAP_DEVICE_PATH mem_path_device[2];
+    EFI_HANDLE kernelImageHandle;
+    EFI_STATUS status;
+
+    kernel += IMAGE_HEADER_SIZE;
+
+    mem_path_device->Header.Type = EFI_DEVICE_PATH_PROTOCOL_HW_TYPE;
+    mem_path_device->Header.SubType = EFI_DEVICE_PATH_PROTOCOL_MEM_SUBTYPE;
+    mem_path_device->MemoryType = EfiLoaderData;
+    mem_path_device->StartingAddress = (EFI_PHYSICAL_ADDRESS)kernel;
+    mem_path_device->EndingAddress = (EFI_PHYSICAL_ADDRESS)(kernel+gKernelSize);
+    SetDevicePathNodeLength(&mem_path_device->Header,
+                            sizeof(MEMMAP_DEVICE_PATH));
+
+    SetDevicePathEndNode(&mem_path_device[1].Header);
+
+    status = uefi_call_wrapper(gSystemTable->BootServices->LoadImage,
+                               6,
+                               0, /* bool */
+                               gImageHandle,
+                               (EFI_DEVICE_PATH*)mem_path_device,
+                               kernel,
+                               gKernelSize,
+                               &kernelImageHandle);
+    if (status != EFI_SUCCESS) {
+#if DEBUG == 1
+        Print(L"can't load kernel image from memory\n");
+#endif
+        panic();
+    }
+
+    status = uefi_call_wrapper(gSystemTable->BootServices->StartImage,
+                               3,
+                               kernelImageHandle, 0, NULL);
+#if DEBUG == 1
+    if (status != EFI_SUCCESS) {
+        Print(L"can't load kernel image from memory\n");
+        panic();
+    }
+#endif
 }
 
 UINT64 FileSize(EFI_FILE_HANDLE FileHandle)
@@ -130,10 +182,18 @@ EFI_STATUS
 EFIAPI
 efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 {
+    CHAR16 *filename = L"bzImage_v1_signed.bin";
     EFI_LOADED_IMAGE *loaded_image = NULL;
+    EFI_FILE_HANDLE vol, file;
     EFI_STATUS status;
+    uint8_t *mem;
+    UINT64 size;
+    UINT64 r;
 
     InitializeLib(ImageHandle, SystemTable);
+    gSystemTable = SystemTable;
+    gImageHandle = ImageHandle;
+
     status = uefi_call_wrapper(SystemTable->BootServices->HandleProtocol,
                                3,
                                ImageHandle,
@@ -144,6 +204,43 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     if (status == EFI_SUCCESS)
         Print(L"Image base: 0x%lx\n", loaded_image->ImageBase);
 #endif
+
+    vol = GetVolume(ImageHandle);
+    file = openFile(filename, vol);
+    size =  FileSize(file);
+
+    status = uefi_call_wrapper(BS->AllocatePages,
+                          4,
+                          AllocateAnyPages,
+                          EfiLoaderData,
+                          (size/PAGE_SIZE) + 1, &kernel_addr);
+
+    if (status != EFI_SUCCESS) {
+#if DEBUG == 1
+        Print(L"can't get memory at specified address %d\n", r);
+        return status;
+#endif
+    }
+
+    mem = (uint8_t*)kernel_addr;
+    status = uefi_call_wrapper(file->Read, 3, file, &size, mem);
+    if (status != EFI_SUCCESS) {
+#if DEBUG == 1
+        Print(L"can't read kernel image %d\n", r);
+#endif
+        return status;
+    }
+
+    gKernelSize = size;
+    if (gKernelSize < IMAGE_HEADER_SIZE) {
+#if DEBUG == 1
+        Print(L"Image smaller than the header\n");
+#endif
+        return EFI_DEVICE_ERROR;
+    }
+
+    gKernelSize = size - IMAGE_HEADER_SIZE;
+    wolfBoot_start();
 
     return EFI_SUCCESS;
 }

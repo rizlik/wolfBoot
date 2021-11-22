@@ -155,7 +155,10 @@ void RAMFUNCTION wolfBoot_start(void)
 	
     wolfBoot_printf("Booting at %08lx\n", load_address);
 
-#ifdef MMU
+#ifdef PLATFORM_X86_64_EFI
+    extern void x86_64_efi_do_boot(uint8_t *);
+    x86_64_efi_do_boot((uint8_t*)kernel_addr);
+#elif defined MMU
     do_boot((uint32_t*)load_address, (uint32_t*)dts_address);
 #else
     do_boot((uint32_t*)load_address);

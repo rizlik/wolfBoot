@@ -21,6 +21,10 @@ UART_TARGET=$(TARGET)
 # Include SHA256 module because it's implicitly needed by RSA
 WOLFCRYPT_OBJS+=./lib/wolfssl/wolfcrypt/src/sha256.o
 
+ifeq ($(ARCH),x86_64)
+  OBJS+=src/boot_x86_64.o
+endif
+
 ## ARM
 ifeq ($(ARCH),AARCH64)
   CROSS_COMPILE:=aarch64-none-elf-
