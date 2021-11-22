@@ -30,6 +30,14 @@
 #include "wolfboot/wolfboot.h"
 #include <string.h>
 
+#ifdef PLATFORM_X86_64_EFI
+    #include "efi/efi.h"
+    #include "efi/efilib.h"
+    extern EFI_PHYSICAL_ADDRESS kernel_addr;
+#else
+    static const uint32_t *kernel_addr = (uint32_t *)WOLFBOOT_LOAD_ADDRESS;
+#endif
+
 extern void hal_flash_dualbank_swap(void);
 
 static inline void boot_panic(void)
@@ -42,7 +50,7 @@ void RAMFUNCTION wolfBoot_start(void)
 {
     int active, ret = 0;
     struct wolfBoot_image os_image;
-    uint32_t* load_address = (uint32_t*)WOLFBOOT_LOAD_ADDRESS;
+    uint32_t* load_address = (uint32_t*)kernel_addr;
     uint8_t* image_ptr;
     uint8_t p_state;
 #ifdef MMU

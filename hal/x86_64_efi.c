@@ -39,6 +39,8 @@ void hal_prepare_boot(void)
 
 #endif
 
+EFI_PHYSICAL_ADDRESS kernel_addr;
+
 int RAMFUNCTION hal_flash_write(uint32_t address, const uint8_t *data, int len)
 {
     return 0;
