@@ -34,8 +34,10 @@
     #include "efi/efi.h"
     #include "efi/efilib.h"
     extern EFI_PHYSICAL_ADDRESS kernel_addr;
+    extern EFI_PHYSICAL_ADDRESS update_addr;
 #else
-    static const uint32_t *kernel_addr = (uint32_t *)WOLFBOOT_LOAD_ADDRESS;
+    static const uint32_t *kernel_addr = (uint32_t *)WOLFBOOT_PARTITION_BOOT_ADDRESS;
+    static const uint32_t *update_addr = (uint32_t *)WOLFBOOT_PARTITION_UPDATE_ADDRESS;
 #endif
 
 extern void hal_flash_dualbank_swap(void);
@@ -63,6 +65,9 @@ void RAMFUNCTION wolfBoot_start(void)
 
     if (active < 0) /* panic if no images available */
         boot_panic();
+
+    if (active == 1)
+        load_address = (uint32_t *)update_addr;
 
     /* Check current status for failure (image still in TESTING), and fall-back
      * if an alternative is available
@@ -151,13 +156,13 @@ void RAMFUNCTION wolfBoot_start(void)
     }
 #endif
 
-    hal_prepare_boot();
 	
     wolfBoot_printf("Booting at %08lx\n", load_address);
+    hal_prepare_boot();
 
 #ifdef PLATFORM_X86_64_EFI
     extern void x86_64_efi_do_boot(uint8_t *);
-    x86_64_efi_do_boot((uint8_t*)kernel_addr);
+    x86_64_efi_do_boot((uint8_t*)load_address);
 #elif defined MMU
     do_boot((uint32_t*)load_address, (uint32_t*)dts_address);
 #else

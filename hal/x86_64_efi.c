@@ -45,9 +45,8 @@ void hal_prepare_boot(void)
 
 static EFI_SYSTEM_TABLE *gSystemTable;
 static EFI_HANDLE *gImageHandle;
-static uint32_t gKernelSize;
-
 EFI_PHYSICAL_ADDRESS kernel_addr;
+EFI_PHYSICAL_ADDRESS update_addr;
 
 int RAMFUNCTION hal_flash_write(uint32_t address, const uint8_t *data, int len)
 {
@@ -77,26 +76,29 @@ void RAMFUNCTION x86_64_efi_do_boot(uint8_t *kernel)
     MEMMAP_DEVICE_PATH mem_path_device[2];
     EFI_HANDLE kernelImageHandle;
     EFI_STATUS status;
+    uint32_t *size;
 
+    size = (uint32_t *)(kernel + 4);
     kernel += IMAGE_HEADER_SIZE;
 
     mem_path_device->Header.Type = EFI_DEVICE_PATH_PROTOCOL_HW_TYPE;
     mem_path_device->Header.SubType = EFI_DEVICE_PATH_PROTOCOL_MEM_SUBTYPE;
     mem_path_device->MemoryType = EfiLoaderData;
     mem_path_device->StartingAddress = (EFI_PHYSICAL_ADDRESS)kernel;
-    mem_path_device->EndingAddress = (EFI_PHYSICAL_ADDRESS)(kernel+gKernelSize);
+    mem_path_device->EndingAddress = (EFI_PHYSICAL_ADDRESS)(kernel+*size);
     SetDevicePathNodeLength(&mem_path_device->Header,
                             sizeof(MEMMAP_DEVICE_PATH));
 
     SetDevicePathEndNode(&mem_path_device[1].Header);
 
+    Print(L"Staging kernel at address %x, size: %u\n", kernel, *size);
     status = uefi_call_wrapper(gSystemTable->BootServices->LoadImage,
                                6,
                                0, /* bool */
                                gImageHandle,
                                (EFI_DEVICE_PATH*)mem_path_device,
                                kernel,
-                               gKernelSize,
+                               *size,
                                &kernelImageHandle);
     if (status != EFI_SUCCESS) {
 #if DEBUG == 1
@@ -178,17 +180,66 @@ EFI_FILE_HANDLE openFile(CHAR16 *file, EFI_FILE_HANDLE volume)
     return file_handle;
 }
 
+static int open_kernel_image(EFI_FILE_HANDLE vol, CHAR16 *filename,
+        EFI_PHYSICAL_ADDRESS *_addr, uint32_t *sz)
+{
+    EFI_FILE_HANDLE file;
+    EFI_STATUS status;
+    uint8_t *addr;
+
+    file = openFile(filename, vol);
+    if (file == NULL)
+        return -1;
+
+    *sz =  FileSize(file);
+#if DEBUG == 1
+    Print(L"Opening file: %s, size: %u\n", filename, *sz);
+#endif
+    status = uefi_call_wrapper(BS->AllocatePages,
+                          4,
+                          AllocateAnyPages,
+                          EfiLoaderData,
+                          (*sz/PAGE_SIZE) + 1, _addr);
+    if (status != EFI_SUCCESS) {
+#if DEBUG == 1
+        Print(L"can't get memory at specified address %d\n", r);
+        return status;
+#endif
+    }
+
+    status = uefi_call_wrapper(file->Read, 3, file, sz, *_addr);
+    if (status != EFI_SUCCESS) {
+#if DEBUG == 1
+        Print(L"can't read kernel image %d\n", r);
+#endif
+        return status;
+    }
+
+    addr = (uint8_t *)*_addr;
+
+    if (*sz < IMAGE_HEADER_SIZE) {
+#if DEBUG == 1
+        Print(L"Image smaller than the header\n");
+#endif
+        return -1;
+    }
+
+    return 0;
+}
+
 EFI_STATUS
 EFIAPI
 efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 {
-    CHAR16 *filename = L"bzImage_v1_signed.bin";
+    CHAR16 *kernel_filename = L"kernel.img";
+    CHAR16 *update_filename = L"update.img";
     EFI_LOADED_IMAGE *loaded_image = NULL;
-    EFI_FILE_HANDLE vol, file;
+    EFI_FILE_HANDLE vol;
     EFI_STATUS status;
     uint8_t *mem;
     UINT64 size;
     UINT64 r;
+    uint32_t kernel_size, update_size;
 
     InitializeLib(ImageHandle, SystemTable);
     gSystemTable = SystemTable;
@@ -206,40 +257,10 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 #endif
 
     vol = GetVolume(ImageHandle);
-    file = openFile(filename, vol);
-    size =  FileSize(file);
 
-    status = uefi_call_wrapper(BS->AllocatePages,
-                          4,
-                          AllocateAnyPages,
-                          EfiLoaderData,
-                          (size/PAGE_SIZE) + 1, &kernel_addr);
+    open_kernel_image(vol, kernel_filename, &kernel_addr, &kernel_size);
+    open_kernel_image(vol, update_filename, &update_addr, &update_size);
 
-    if (status != EFI_SUCCESS) {
-#if DEBUG == 1
-        Print(L"can't get memory at specified address %d\n", r);
-        return status;
-#endif
-    }
-
-    mem = (uint8_t*)kernel_addr;
-    status = uefi_call_wrapper(file->Read, 3, file, &size, mem);
-    if (status != EFI_SUCCESS) {
-#if DEBUG == 1
-        Print(L"can't read kernel image %d\n", r);
-#endif
-        return status;
-    }
-
-    gKernelSize = size;
-    if (gKernelSize < IMAGE_HEADER_SIZE) {
-#if DEBUG == 1
-        Print(L"Image smaller than the header\n");
-#endif
-        return EFI_DEVICE_ERROR;
-    }
-
-    gKernelSize = size - IMAGE_HEADER_SIZE;
     wolfBoot_start();
 
     return EFI_SUCCESS;
